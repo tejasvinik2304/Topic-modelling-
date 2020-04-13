@@ -1,0 +1,149 @@
+---
+title: "Topic modelling"
+output: html_document
+---
+Part 1 
+```{r}
+class_size <- read.csv('class.csv')
+plot(class_size)
+y <- class_size$mean_test_score
+x <- class_size$class_size
+linreg <- lm(y ~ x, class_size)
+summary(linreg) 
+abline(linreg)
+```
+Part 2
+```{r}
+library(rdrobust)
+rdplot(y, x, p = 0, col.lines = "red", col.dots = "blue", c = 30, x.label = 'Class Size',
+         y.label = "Mean of Test Score")
+```
+Part 3
+```{r}
+library('dplyr')
+library('rddtools')
+rdd_data(class_size$mean_test_score, class_size$class_size, cutpoint = 30) %>%
+  rdd_reg_lm(slope = 'same') %>%
+  summary()
+```
+
+Question 1 : generating clusters 
+```{r}
+load("congress.RData")
+fs <- scale(as.matrix(congress109Counts/rowSums(congress109Counts)))
+cluster5  <-  kmeans(x = fs, centers = 25)
+cluster10 <-  kmeans(x = fs, centers = 25)
+cluster15 <-  kmeans(x = fs, centers = 25)
+cluster20 <-  kmeans(x = fs, centers = 25)
+cluster25 <-  kmeans(x = fs, centers = 25)
+```
+Question 2 : Choosing the K (K=25 has the lowers AICc)
+```{r}
+
+
+kic <- function(fit, rule=c("A","D")){
+	df <- length(fit$centers) # K*dim
+	n <- sum(fit$size)
+	D <- fit$tot.withinss # deviance
+	rule=match.arg(rule)
+	if(rule=="A")
+		return(D + 2*df*n/(n-df-1))
+	else
+		return(D)
+}
+
+AICc <- list()
+Dev <- list()
+k <- seq(from = 5, to = 25, by = 5)
+for (center in k){
+  fit <- kmeans(x = fs, centers = center)
+  AICc <- c(AICc, kic(fit, 'A'))
+  Dev <- c(Dev, kic(fit, 'D'))
+}
+
+
+plot(k, AICc)
+plot(k, Dev)
+```
+Question 3 : Choosing the topic model with BF 
+```{r}
+library(Matrix)
+library(maptpx)
+x <- as.simple_triplet_matrix(congress109Counts)
+tpcs <- topics(x, K=5*(1:5), verb=10)
+summary(tpcs, n=10)
+```
+
+```{r}
+library(wordcloud)
+par(mfrow=c(1,2))
+for (topic in 1:10){
+  wordcloud(row.names(tpcs$theta), 
+	freq=tpcs$theta[,topic], min.freq=0.004, col="navy")
+}
+```
+
+Question 4 :Cluster with k - 25 mapped to parties to see the non-partisian clustures
+```{r}
+
+fit <- kmeans(x = fs, centers = 25)
+cluster_center <- matrix(fit$cluster, dimnames = list(names(fit$cluster), 'Cluster'))
+name_D <- matrix(congress109Ideology$party, dimnames = list(names(fit$cluster), 'Party'))
+tabulate <- cbind(cluster_center, name_D)
+
+party_kmeans <- matrix(nrow = 25, ncol = 2, dimnames = list(1:25, c('Num of R', 'Num of D')))
+for (i in 1:25){
+  row_sum <- tabulate[tabulate[,'Cluster'] == i]
+  row_R <- sum(row_sum  == 'R')
+  row_D <- sum(row_sum  == 'D')
+  party_kmeans[i, 'Num of R'] <- round(row_R / (row_R + row_D), 2)
+  party_kmeans[i, 'Num of D'] <- round(row_D / (row_R + row_D), 2)
+}
+
+party_kmeans
+```
+Question 4 : Compaing regression with phrases v/s topics for both the parties by regressing on repshare
+
+```{r}
+library(glmnet)
+congress_Ideology <- congress109Ideology[congress109Ideology$party != 'I',]
+congress_Ideology$party <- factor(congress_Ideology$party)
+name_I <- congress109Ideology[congress109Ideology$party == 'I',]$name
+name_R <- congress109Ideology[congress109Ideology$party == 'R',]$name
+name_D <- congress109Ideology[congress109Ideology$party == 'D',]$name
+```
+
+```{r}
+tpcs$omega <- tpcs$omega[rownames(tpcs$omega) != name_I,]
+congress109Counts <- congress109Counts[rownames(congress109Counts) != name_I,]
+
+x_R <- tpcs$omega[rownames(tpcs$omega) == name_R,]
+repshare_R <- congress109Ideology[congress109Ideology$party == 'R',][,"repshare"]
+regrepshare_R.cv <- cv.glmnet(x_R, repshare_R)
+plot(regrepshare_R.cv)
+mtext("party regression by phrase of Republic", font=2, line=2)
+sprintf ('OOS R-square for regression onto repshare: %s', round(max(1-regrepshare_R.cv$cvm/regrepshare_R.cv$cvm[1]), 5))
+
+congress_Counts_R <- congress109Counts[rownames(congress109Counts) == name_R,]
+x_percentage_R <- 100 * congress_Counts_R / rowSums(congress_Counts_R)
+regrepshare_R_per.cv <- cv.glmnet(x_percentage_R, repshare_R)
+plot(regrepshare_R_per.cv)
+mtext("party regression by phrase percentage of Republic", font=2, line=2)
+sprintf ('OOS R-square for regression onto repshare percentage: %s', round(max(1-regrepshare_R_per.cv$cvm/regrepshare_R_per.cv$cvm[1]), 5))
+```
+
+```{r}
+x_D <- tpcs$omega[rownames(tpcs$omega) != name_R,]
+repshare_D <- congress109Ideology[congress109Ideology$party == 'D',][,"repshare"]
+regrepshare_D.cv <- cv.glmnet(x_D, repshare_D)
+plot(regrepshare_D.cv)
+mtext("repshare regression by phrase of Democratic", font=2, line=2)
+sprintf ('OOS R-square for regression onto repshare: %s', round(max(1-regrepshare_D.cv$cvm/regrepshare_D.cv$cvm[1]), 5))
+
+congress_Counts_D <- congress109Counts[rownames(congress109Counts) != name_R,]
+x_percentage_D <- 100 * congress_Counts_D / rowSums(congress_Counts_D)
+regrepshare_D_per.cv <- cv.glmnet(x_percentage_D, repshare_D)
+plot(regrepshare_D_per.cv)
+mtext("party regression by phrase percentage of Democratic", font=2, line=2)
+sprintf ('OOS R-square for regression onto repshare percentages: %s', round(max(1-regrepshare_D_per.cv$cvm/regrepshare_D_per.cv$cvm[1]), 5))
+```
